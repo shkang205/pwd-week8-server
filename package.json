@@ -19,7 +19,8 @@
     "change-user-type": "tsx scripts/change-user-type.ts",
     "test:live": "tsx scripts/verify-live.ts",
     "auth:check": "tsx scripts/check-auth.ts",
-    "auth:setup-naver": "tsx scripts/setup-naver-oidc.ts"
+    "auth:setup-naver": "tsx scripts/setup-naver-oidc.ts",
+    "test:rls": "tsx scripts/verify-rls.ts"
   },
   "dependencies": {
     "cors": "^2.8.5",

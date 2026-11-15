@@ -28,6 +28,19 @@ export function getSupabase(): SupabaseClient<Database> {
   return client;
 }
 
+// [과제: RLS] 사용자의 액세스 토큰을 그대로 DB 요청에 전달하는 클라이언트입니다.
+// Publishable key + 사용자 JWT로 요청하므로 PostgreSQL이 auth.uid()와 RLS 정책으로 권한을 판단합니다.
+export function getUserSupabase(accessToken: string): SupabaseClient<Database> {
+  const url = process.env.SUPABASE_URL?.trim();
+  const key = process.env.SUPABASE_PUBLISHABLE_KEY?.trim();
+  if (!url || !key || key.includes("replace_with"))
+    throw new Error("서버의 SUPABASE_PUBLISHABLE_KEY를 설정하세요. (RLS 적용 요청에 필요)");
+  return createClient<Database>(url, key, {
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  });
+}
+
 export function throwDatabaseError(error: {
   code?: string;
   message: string;
@@ -47,6 +60,8 @@ export function throwDatabaseError(error: {
     throw new HttpError(409, "대기 중인 제보만 승인할 수 있습니다.");
   if (error.message.includes("INACTIVE_USER"))
     throw new HttpError(409, "비활성 계정의 권한을 변경할 수 없습니다.");
+  if (error.code === "42501")
+    throw new HttpError(403, "권한이 없습니다. (RLS 정책에 의해 차단)");
   if (error.code === "23505")
     throw new HttpError(409, "이미 등록되었거나 처리된 데이터입니다.");
   if (["23502", "23503", "23514", "22P02"].includes(error.code ?? ""))

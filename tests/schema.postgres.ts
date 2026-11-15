@@ -9,19 +9,29 @@ const schema = readFileSync(
   "utf8",
 );
 const seed = readFileSync(path.join(__dirname, "../supabase/seed.sql"), "utf8");
+const rls = readFileSync(path.join(__dirname, "../supabase/rls.sql"), "utf8");
+const rlsVerify = readFileSync(
+  path.join(__dirname, "../supabase/rls-verify.sql"),
+  "utf8",
+);
 const adminId = "11111111-1111-4111-8111-111111111111";
 const userId = "22222222-2222-4222-8222-222222222222";
 const authBootstrap = `create role anon; create role authenticated; create role service_role bypassrls;
-  create schema auth; create table auth.users(id uuid primary key,email text,raw_user_meta_data jsonb,raw_app_meta_data jsonb);`;
+  create schema auth; create table auth.users(id uuid primary key,email text,raw_user_meta_data jsonb,raw_app_meta_data jsonb,aud text,role text);
+  create function auth.uid() returns uuid language sql stable as $$
+    select nullif(nullif(current_setting('request.jwt.claims', true),'')::jsonb->>'sub','')::uuid $$;
+  grant usage on schema auth to anon,authenticated,service_role;
+  grant execute on function auth.uid() to anon,authenticated,service_role;`;
 let db: PGlite;
 before(async () => {
   db = new PGlite();
   await db.exec(authBootstrap);
   await db.exec(schema);
+  await db.exec(rls);
 });
 beforeEach(async () => {
   await db.exec(
-    "reset role; drop function if exists public.fail_approval() cascade; truncate auth.users,public.profiles,public.submissions,public.restaurants restart identity cascade;",
+    "reset role; select set_config('request.jwt.claims','',false); drop function if exists public.fail_approval() cascade; truncate auth.users,public.profiles,public.submissions,public.restaurants restart identity cascade;",
   );
   await db.exec(seed);
   await db.query(
@@ -142,6 +152,7 @@ test("스키마·seed 재실행이 기존 맛집과 관리자 역할을 보존�
     "update public.restaurants set description='보존할 값' where id=1",
   );
   await db.exec(schema);
+  await db.exec(rls);
   await db.exec(seed);
   assert.equal(
     (
@@ -161,10 +172,11 @@ test("스키마·seed 재실행이 기존 맛집과 관리자 역할을 보존�
     "admin",
   );
 });
-test("서버 역할은 맛집을 수정할 수 있고 브라우저 역할은 테이블·RPC에 접근할 수 없다", async () => {
+test("서버 역할은 맛집을 수정할 수 있고 브라우저 역할은 맛집 조회 외 테이블·RPC에 접근할 수 없다", async () => {
   for (const role of ["anon", "authenticated"]) {
     await db.exec(`set role ${role}`);
-    for (const table of ["restaurants", "profiles", "submissions"])
+    assert.ok((await db.query("select * from public.restaurants")).rows.length > 0);
+    for (const table of ["profiles", "submissions"])
       await assert.rejects(db.query(`select * from public.${table}`), {
         code: "42501",
       });
@@ -292,4 +304,39 @@ test("DB가 ID를 생성하고 잘못된 평점·빈 이름·상태를 거절한
     db.query("update public.submissions set status='other' where id=$1", [id]),
     { code: "23514" },
   );
+});
+
+test("RLS: 비회원 조회, 회원 등록·본인 수정, 타인 수정·삭제 차단, 관리자 수정·삭제 허용", async () => {
+  const results = await db.exec(rlsVerify);
+  const rows = results[results.length - 1].rows as {
+    step: number;
+    pass: boolean;
+  }[];
+  assert.equal(rows.length, 8);
+  for (const row of rows) assert.equal(row.pass, true, `step ${row.step}`);
+});
+test("RLS: 회원은 created_by를 위조하거나 남의 행으로 옮길 수 없다", async () => {
+  await db.query(
+    "select set_config('request.jwt.claims',$1,false)",
+    [JSON.stringify({ sub: userId, role: "authenticated" })],
+  );
+  await db.exec("set role authenticated");
+  const inserted = await db.query<{ id: number; created_by: string }>(
+    "insert into public.restaurants(name,category,location) values ('위조','한식','정문') returning id,created_by",
+  );
+  assert.equal(inserted.rows[0].created_by, userId);
+  await assert.rejects(
+    db.query("update public.restaurants set created_by=$1 where id=$2", [
+      adminId,
+      inserted.rows[0].id,
+    ]),
+    { code: "42501" },
+  );
+  await assert.rejects(
+    db.query("update public.restaurants set likes=999 where id=$1", [
+      inserted.rows[0].id,
+    ]),
+    { code: "42501" },
+  );
+  await db.exec("reset role");
 });

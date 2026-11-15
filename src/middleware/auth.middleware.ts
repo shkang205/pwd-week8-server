@@ -32,6 +32,7 @@ export const isAuthenticated = asyncHandler(async (req, _res, next) => {
   if (!result.data.is_active)
     throw new HttpError(403, "비활성화된 계정입니다.");
   req.auth = profileResponse(result.data);
+  req.accessToken = match[1];
   next();
 });
 export const requireAdmin: RequestHandler = (req, _res, next) => {

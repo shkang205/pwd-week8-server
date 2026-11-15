@@ -1,8 +1,9 @@
 jest.mock("../src/config/supabase", () => ({
   ...jest.requireActual("../src/config/supabase"),
   getSupabase: jest.fn(),
+  getUserSupabase: jest.fn(),
 }));
-import { getSupabase } from "../src/config/supabase";
+import { getSupabase, getUserSupabase } from "../src/config/supabase";
 import * as restaurants from "../src/services/restaurants.service";
 import * as submissions from "../src/services/submissions.service";
 import * as users from "../src/services/users.service";
@@ -14,6 +15,7 @@ const query = {
   update: jest.fn().mockReturnThis(),
   delete: jest.fn().mockReturnThis(),
   eq: jest.fn().mockReturnThis(),
+  in: jest.fn().mockResolvedValue({ data: [], error: null }),
   single: jest.fn(),
   maybeSingle: jest.fn(),
 };
@@ -46,6 +48,9 @@ beforeEach(() => {
   jest
     .mocked(getSupabase)
     .mockReturnValue(client as unknown as ReturnType<typeof getSupabase>);
+  jest
+    .mocked(getUserSupabase)
+    .mockReturnValue(client as unknown as ReturnType<typeof getSupabase>);
   query.single.mockResolvedValue({ data: row, error: null });
   query.maybeSingle.mockResolvedValue({ data: row, error: null });
 });
@@ -58,7 +63,9 @@ test("맛집 생성은 DB identity를 사용하고 관리 필드·ID를 입력�
     category: "한식",
     location: "캠퍼스",
     recommendedMenu: "김밥, 라면",
-  });
+    created_by: "someone-else",
+  }, "user-token");
+  expect(getUserSupabase).toHaveBeenCalledWith("user-token");
   expect(query.insert).toHaveBeenCalledWith({
     name: "식당",
     category: "한식",
@@ -68,7 +75,7 @@ test("맛집 생성은 DB identity를 사용하고 관리 필드·ID를 입력�
   expect(result).toMatchObject({ id: 4, priceRange: "정보 없음" });
 });
 test("부분 수정은 생략한 메뉴·설명·평점을 지우지 않는다", async () => {
-  await restaurants.updateRestaurant("4", { name: "새 이름" });
+  await restaurants.updateRestaurant("4", { name: "새 이름" }, "user-token");
   expect(query.update).toHaveBeenCalledWith({ name: "새 이름" });
 });
 test("제보자·상태는 요청 본문 대신 검증한 계정과 서버 기본값을 사용한다", async () => {
@@ -129,14 +136,16 @@ test.each([
   { name: " ", category: "한식", location: "캠퍼스" },
   { name: "식당", category: "한식", location: "캠퍼스", rating: 6 },
 ])("잘못된 맛집 입력을 거절한다: %p", async (input) => {
-  await expect(restaurants.createRestaurant(input)).rejects.toMatchObject({
+  await expect(restaurants.createRestaurant(input, "t")).rejects.toMatchObject({
     statusCode: 400,
   });
 });
 test("존재하지 않는 수정은 404, 마지막 관리자 변경은 409를 반환한다", async () => {
-  query.maybeSingle.mockResolvedValueOnce({ data: null, error: null });
+  query.maybeSingle
+    .mockResolvedValueOnce({ data: null, error: null })
+    .mockResolvedValueOnce({ data: null, error: null });
   await expect(
-    restaurants.updateRestaurant("99", { name: "새 이름" }),
+    restaurants.updateRestaurant("99", { name: "새 이름" }, "t"),
   ).rejects.toMatchObject({ statusCode: 404 });
   client.rpc.mockResolvedValueOnce({
     data: null,
@@ -152,4 +161,32 @@ test("존재하지 않는 수정은 404, 마지막 관리자 변경은 409를 �
   await expect(submissions.approveSubmission("1", actor)).rejects.toMatchObject(
     { statusCode: 403 },
   );
+});
+
+test("RLS가 0행으로 막은 타인 음식점 수정·삭제는 403을 반환한다", async () => {
+  // 사용자 토큰 요청은 0행, 서버 키 존재 확인은 행이 있음
+  query.maybeSingle
+    .mockResolvedValueOnce({ data: null, error: null })
+    .mockResolvedValueOnce({ data: { id: 4 }, error: null });
+  await expect(
+    restaurants.updateRestaurant("4", { name: "남의 것" }, "other-token"),
+  ).rejects.toMatchObject({ statusCode: 403 });
+  query.maybeSingle
+    .mockResolvedValueOnce({ data: null, error: null })
+    .mockResolvedValueOnce({ data: { id: 4 }, error: null });
+  await expect(
+    restaurants.deleteRestaurant("4", "other-token"),
+  ).rejects.toMatchObject({ statusCode: 403 });
+});
+test("RLS insert 거부(42501)는 403으로 변환한다", async () => {
+  query.single.mockResolvedValueOnce({
+    data: null,
+    error: { code: "42501", message: "new row violates row-level security policy" },
+  });
+  await expect(
+    restaurants.createRestaurant(
+      { name: "식당", category: "한식", location: "캠퍼스" },
+      "inactive-token",
+    ),
+  ).rejects.toMatchObject({ statusCode: 403 });
 });

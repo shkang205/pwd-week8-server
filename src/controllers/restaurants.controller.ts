@@ -11,13 +11,24 @@ export const popular = asyncHandler(async (req, res) => {
 export const get = asyncHandler(async (req, res) => {
   res.json({ data: await service.getRestaurantById(req.params.id) });
 });
+export const mine = asyncHandler(async (req, res) => {
+  res.json({ data: await service.getMyRestaurants(req.auth!.id) });
+});
 export const create = asyncHandler(async (req, res) => {
-  res.status(201).json({ data: await service.createRestaurant(req.body) });
+  res
+    .status(201)
+    .json({ data: await service.createRestaurant(req.body, req.accessToken!) });
 });
 export const update = asyncHandler(async (req, res) => {
-  res.json({ data: await service.updateRestaurant(req.params.id, req.body) });
+  res.json({
+    data: await service.updateRestaurant(
+      req.params.id,
+      req.body,
+      req.accessToken!,
+    ),
+  });
 });
 export const remove = asyncHandler(async (req, res) => {
-  await service.deleteRestaurant(req.params.id);
+  await service.deleteRestaurant(req.params.id, req.accessToken!);
   res.status(204).send();
 });

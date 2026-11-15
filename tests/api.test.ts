@@ -51,9 +51,6 @@ beforeEach(() => {
 const adminRoutes: [string, string][] = [
   ["get", "/api/users/all"],
   ["put", `/api/users/${profile.id}/type`],
-  ["post", "/api/restaurants"],
-  ["put", "/api/restaurants/1"],
-  ["delete", "/api/restaurants/1"],
   ["get", "/api/submissions"],
   ["get", "/api/submissions/1"],
   ["put", "/api/submissions/1"],
@@ -196,5 +193,29 @@ test("이전 로그인·전체 초기화 데모는 노출하지 않는다", asyn
   expect((await request(app).post("/api/auth/login")).status).toBe(404);
   expect((await request(app).post("/api/restaurants/reset-demo")).status).toBe(
     404,
+  );
+});
+const memberRoutes: [string, string][] = [
+  ["post", "/api/restaurants"],
+  ["put", "/api/restaurants/1"],
+  ["delete", "/api/restaurants/1"],
+  ["get", "/api/restaurants/mine"],
+];
+test.each(memberRoutes)("비로그인 %s %s 맛집 쓰기 요청은 401", async (method, url) => {
+  const result = await request(app)[method as "get"](url);
+  expect(result.status).toBe(401);
+});
+test("일반 회원의 맛집 등록은 사용자 토큰과 함께 서비스(RLS)로 전달된다", async () => {
+  jest
+    .mocked(restaurants.createRestaurant)
+    .mockResolvedValue({ id: 9 } as never);
+  const result = await request(app)
+    .post("/api/restaurants")
+    .set("Authorization", "Bearer user-token")
+    .send({ name: "식당", category: "한식", location: "정문" });
+  expect(result.status).toBe(201);
+  expect(restaurants.createRestaurant).toHaveBeenCalledWith(
+    expect.anything(),
+    "user-token",
   );
 });

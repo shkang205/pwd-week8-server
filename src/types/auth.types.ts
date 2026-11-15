@@ -18,6 +18,7 @@ declare global {
   namespace Express {
     interface Request {
       auth?: AppUser;
+      accessToken?: string;
     }
   }
 }

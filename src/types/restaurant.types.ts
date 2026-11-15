@@ -9,6 +9,8 @@ export interface RestaurantData {
   recommendedMenu: string[];
   likes: number;
   image: string;
+  createdBy: string | null;
+  createdByName: string | null;
 }
 
 // 모델은 숫자로 전달되거나 문자열로 전달된 값을 모두 숫자로 정규화합니다.
@@ -23,6 +25,8 @@ export interface RestaurantInput {
   recommendedMenu?: string[];
   likes?: number | string;
   image?: string;
+  createdBy?: string | null;
+  createdByName?: string | null;
 }
 
 export interface CreateRestaurantInput {
